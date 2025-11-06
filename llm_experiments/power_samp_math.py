@@ -37,7 +37,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", action = "store", default = "MATH", type = str)
     parser.add_argument("--cot", action = "store", type = bool, default = True)
     parser.add_argument("--mcmc_steps", action = "store", type = int, default = 10)
-    parser.add_argument("--device", action = "store", type = str, dest = "device", default = "cuda" if torch.cuda.is_available() else 'cpu')
     parser.add_argument("--batch_idx", action = "store", type = int, default = 0)
     parser.add_argument("--seed", action = "store", type = int, default = 0)
     args = parser.parse_args()
@@ -46,7 +45,6 @@ if __name__ == "__main__":
 
 
     model = args.model
-    device = args.device
     dataset_name = args.dataset
     cot = args.cot
     temp = args.temperature
@@ -57,7 +55,6 @@ if __name__ == "__main__":
 
 
     print(model)
-    print(device)
     print(mcmc_steps)
     if model == "qwen":
         model_str = "Qwen/Qwen2.5-7B"
@@ -78,7 +75,8 @@ if __name__ == "__main__":
 
     print("dataset done")
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_str, trust_remote_code = True)
-    hf_model = transformers.AutoModelForCausalLM.from_pretrained(model_str, torch_dtype="auto", device_map="auto", trust_remote_code = True).to(device)
+    hf_model = transformers.AutoModelForCausalLM.from_pretrained(model_str, torch_dtype="auto", device_map="auto", trust_remote_code = True)
+    device = hf_model.device
     autoreg_sampler = AutoregressiveSampler(hf_model, tokenizer, device)
 
     print("loaded models")
@@ -109,6 +107,8 @@ if __name__ == "__main__":
         print(tokenizer.decode(std_output[0][:, len(input_ids[0]):].squeeze().to("cpu"), skip_special_tokens=True))
         print("std done")
 
+        tree_search_output = blockwise_tree_search(autoreg_sampler, prefx, temp, mcmc_steps + 1, max_new_tokens=3072)
+
         mcmc_power_samp_output, _, _, acceptance_ratio = mcmc_power_samp(autoreg_sampler, prefx, temp, mcmc_steps, max_new_tokens=3072)
 
         print(len(std_output))
@@ -120,18 +120,22 @@ if __name__ == "__main__":
         naive_generated_ids = naive_temp_output[0][:, len(input_ids[0]):].squeeze().to("cpu")
         std_generated_ids = std_output[0][:, len(input_ids[0]):].squeeze().to("cpu")
         mcmc_power_samp_ids = torch.tensor([mcmc_power_samp_output], dtype=torch.long, device=device).squeeze().to("cpu")
+        tree_search_samp_ids = torch.tensor([tree_search_output], dtype=torch.long, device=device).squeeze().to("cpu")
 
         naive_completion = tokenizer.decode(naive_generated_ids, skip_special_tokens=True)
         std_completion = tokenizer.decode(std_generated_ids, skip_special_tokens=True)
         mcmc_completion = tokenizer.decode(mcmc_power_samp_ids, skip_special_tokens=True)
+        tree_search_completion = tokenizer.decode(tree_search_samp_ids, skip_special_tokens=True)
 
         naive_answer = parse_answer(naive_completion)
         std_answer = parse_answer(std_completion)
         mcmc_answer = parse_answer(mcmc_completion)
+        tree_search_answer = parse_answer(tree_search_completion)
         
         print(naive_answer)
         print(std_answer)
         print(mcmc_answer)
+        print(tree_search_answer)
         print(question)
         print(answer)
         print(f'Acceptance: {acceptance_ratio}')
@@ -146,6 +150,8 @@ if __name__ == "__main__":
             "std_answer": std_answer,
             "mcmc_completion": mcmc_completion,
             "mcmc_answer": mcmc_answer,
+            "tree_search_completion": tree_search_completion,
+            "tree_search_answer": tree_search_answer,
         })
 
     

@@ -1,4 +1,5 @@
 import pandas as pd
+import argparse
 import json
 from pathlib import Path
 from typing import List, Dict, Any
@@ -34,7 +35,7 @@ def math_results(fnames):
     temp_total = 0
     mcmc_total = 0
     total = 0
-
+    
     for fname in fnames:
         base, temp, mcmc, n = eval_math(fname)
         base_total += base

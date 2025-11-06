@@ -64,7 +64,7 @@ def dist_temp_scale(logit_p, temp):
     return logit_p * torch.tensor(1 / temp, dtype=logit_p.dtype, device=logit_p.device)
 
 # low-temperature sampling proposal distribution
-def naive_temp(p : AutoregressiveSampler, context, temp, seq_len):
+def naive_temp(p : AutoregressiveSampler, context, temp, seq_len, return_joint=False):
     c = len(context)
     device = p.device
     tokenizer = p.tokenizer
@@ -90,12 +90,61 @@ def naive_temp(p : AutoregressiveSampler, context, temp, seq_len):
 
     idx = tokens.view(unscaled_logits.shape[0], 1, 1)
 
-    log_probs_unnorm = (1/temp * torch.gather(F.log_softmax(unscaled_logits, dim=-1), -1, idx)).view(-1).tolist()
+    logprobs = torch.gather(F.log_softmax(unscaled_logits, dim=-1), -1, idx)
+    joint_ll = logprobs.sum().item()
+
+    log_probs_unnorm = (1/temp * logprobs).view(-1).tolist()
     log_probs_norm = torch.gather(F.log_softmax(scaled_logits, dim=-1), -1, idx).view(-1).tolist()
 
     assert len(tokens) == len(log_probs_unnorm) == len(log_probs_norm)
 
+    if return_joint:
+        return prop, log_probs_norm, log_probs_unnorm, joint_ll
+
     return prop, log_probs_norm, log_probs_unnorm
+
+
+def blockwise_tree_search(p: AutoregressiveSampler, context, temp, width, max_new_tokens, block_num=16):
+    c = len(context)
+    print(f'Temp: {temp}')
+    gen = []
+    if context is not None:
+        gen = context.copy()
+    log_probs_norm = []
+    log_probs_unnorm = []
+
+
+    print(max_new_tokens)
+    assert width > 0
+    assert max_new_tokens % block_num == 0
+    jump_size = int(max_new_tokens // block_num)
+    print(jump_size)
+
+
+    for i in tqdm(range(block_num)):
+        max_joint_ll = -float('inf')
+        max_gen = None
+        start_len = len(gen)
+        # print(f'======= Block {i+1} =======')
+        for _ in range(width):
+            gen, _, _, joint_ll = naive_temp(p, gen[:start_len], temp=temp, seq_len=jump_size+start_len,
+                                                                return_joint=True)
+            if joint_ll > max_joint_ll:
+                max_joint_ll = joint_ll
+                max_gen = gen
+
+            # print(p.tokenizer.decode(gen[start_len:]))
+            # print(f"joint ll: {joint_ll}")
+            # print('-----')
+        gen = max_gen
+        if p.tokenizer.eos_token_id in gen:
+            eos_idx = gen.index(p.tokenizer.eos_token_id)
+            gen = gen[:eos_idx + 1]
+            return gen
+        # print(f"Selected Generation for Block {i+1}:")
+        print(p.tokenizer.decode(gen[start_len:]))
+
+    return gen
 
 
 # alpha = infty power sampling; temp is for proposal distribution
